@@ -30,38 +30,26 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Verify test files exist
-        run: |
-          echo "=== Repo structure ==="
-          find . -type f | grep -v __pycache__ | grep -v .git | sort
-          echo ""
-          echo "=== Checking tests/ folder ==="
-          if [ ! -d tests ]; then
-            echo "ERROR: tests/ directory not found!"
-            exit 1
-          fi
-          ls -la tests/
-
       - name: Run model tests
         run: |
-          pytest tests/test_model.py -v \
+          pytest test_model.py -v \
             --cov=siamese_model \
             --cov=lgbm_model \
             --cov-report=term-missing
 
       - name: Run backtest / metrics tests
         run: |
-          pytest tests/test_backtest.py -v \
+          pytest test_backtest.py -v \
             --cov=metrics \
             --cov=inference \
             --cov-report=term-missing
 
-      # test_dataset.py is skipped in CI — it calls load_source_data()
-      # which requires HF_TOKEN. Run locally with HF_TOKEN set.
+      # test_dataset.py skipped in CI — requires HF_TOKEN to load data
+      # Run locally: HF_TOKEN=your_token pytest test_dataset.py
       - name: Note on skipped tests
         run: |
-          echo "tests/test_dataset.py is skipped in CI (requires HF_TOKEN)."
-          echo "Run locally: HF_TOKEN=your_token pytest tests/test_dataset.py"
+          echo "test_dataset.py skipped in CI (requires HF_TOKEN)."
+          echo "Run locally: HF_TOKEN=your_token pytest test_dataset.py"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
