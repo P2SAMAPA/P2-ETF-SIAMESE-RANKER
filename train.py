@@ -17,16 +17,46 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_config(config_path: str) -> dict:
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+    """Load a YAML config file. Tries absolute path first, then cwd-relative."""
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    # Fallback: try relative to cwd (useful when called from repo root)
+    cwd_path = os.path.join(os.getcwd(), config_path)
+    if os.path.exists(cwd_path):
+        with open(cwd_path) as f:
+            return yaml.safe_load(f)
+    raise FileNotFoundError(
+        f"Config not found at '{config_path}' or '{cwd_path}'.\n"
+        f"Make sure the configs/ folder is committed to git and you are "
+        f"running from the repo root."
+    )
 
 
 def load_global_config() -> dict:
-    return load_config(os.path.join(_ROOT, "configs", "global_config.yaml"))
+    # Try __file__-relative first, then cwd-relative
+    for base in [_ROOT, os.getcwd()]:
+        path = os.path.join(base, "configs", "global_config.yaml")
+        if os.path.exists(path):
+            with open(path) as f:
+                return yaml.safe_load(f)
+    raise FileNotFoundError(
+        "configs/global_config.yaml not found. "
+        "Ensure the configs/ folder is committed and you are at the repo root."
+    )
 
 
 def load_module_config(module: str) -> dict:
-    return load_config(os.path.join(_ROOT, "configs", f"{module}_config.yaml"))
+    filename = f"{module}_config.yaml"
+    for base in [_ROOT, os.getcwd()]:
+        path = os.path.join(base, "configs", filename)
+        if os.path.exists(path):
+            with open(path) as f:
+                return yaml.safe_load(f)
+    raise FileNotFoundError(
+        f"configs/{filename} not found. "
+        "Ensure the configs/ folder is committed and you are at the repo root."
+    )
 
 
 # ---------------------------------------------------------------------------
