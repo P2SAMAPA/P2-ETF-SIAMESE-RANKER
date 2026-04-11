@@ -30,16 +30,38 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Run tests
+      - name: Verify test files exist
         run: |
-          pytest tests/ -v \
-            --cov=. \
-            --cov-report=term-missing \
-            --cov-report=xml \
-            --ignore=tests/test_dataset.py \
-            -k "not load_source_data"
-        # Note: test_dataset tests that hit HuggingFace are skipped in CI
-        # to avoid requiring HF_TOKEN. Run locally with HF_TOKEN set.
+          echo "=== Repo structure ==="
+          find . -type f | grep -v __pycache__ | grep -v .git | sort
+          echo ""
+          echo "=== Checking tests/ folder ==="
+          if [ ! -d tests ]; then
+            echo "ERROR: tests/ directory not found!"
+            exit 1
+          fi
+          ls -la tests/
+
+      - name: Run model tests
+        run: |
+          pytest tests/test_model.py -v \
+            --cov=siamese_model \
+            --cov=lgbm_model \
+            --cov-report=term-missing
+
+      - name: Run backtest / metrics tests
+        run: |
+          pytest tests/test_backtest.py -v \
+            --cov=metrics \
+            --cov=inference \
+            --cov-report=term-missing
+
+      # test_dataset.py is skipped in CI — it calls load_source_data()
+      # which requires HF_TOKEN. Run locally with HF_TOKEN set.
+      - name: Note on skipped tests
+        run: |
+          echo "tests/test_dataset.py is skipped in CI (requires HF_TOKEN)."
+          echo "Run locally: HF_TOKEN=your_token pytest tests/test_dataset.py"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -52,5 +74,9 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "Tests ran on Python 3.11 / ubuntu-latest" >> $GITHUB_STEP_SUMMARY
+          echo "## CI Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Test file | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| test_model.py | ✅ ran |" >> $GITHUB_STEP_SUMMARY
+          echo "| test_backtest.py | ✅ ran |" >> $GITHUB_STEP_SUMMARY
+          echo "| test_dataset.py | ⏭️ skipped (needs HF_TOKEN) |" >> $GITHUB_STEP_SUMMARY
