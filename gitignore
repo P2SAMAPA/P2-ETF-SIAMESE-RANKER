@@ -53,3 +53,8 @@ Thumbs.db
 # ── HuggingFace cache ─────────────────────────────────────
 .cache/
 ~/.cache/huggingface/
+
+# ── Never ignore tests or notebooks ───────────────────────
+!tests/
+!tests/*.py
+!notebooks/
