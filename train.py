@@ -1,7 +1,8 @@
 """
 train.py
 Training orchestrator — Siamese + LightGBM fallback, all horizons.
-All files are flat at repo root; configs live in configs/.
+All .py files are flat at repo root; YAML configs are flat at root too
+(or optionally in a configs/ subfolder — both are searched).
 """
 
 import numpy as np
@@ -16,47 +17,39 @@ logger = logging.getLogger(__name__)
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_config(config_path: str) -> dict:
-    """Load a YAML config file. Tries absolute path first, then cwd-relative."""
-    if os.path.exists(config_path):
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    # Fallback: try relative to cwd (useful when called from repo root)
-    cwd_path = os.path.join(os.getcwd(), config_path)
-    if os.path.exists(cwd_path):
-        with open(cwd_path) as f:
-            return yaml.safe_load(f)
+def _find_yaml(filename: str) -> str:
+    """
+    Find a YAML config file. Search order:
+      1. Flat at repo root          e.g. global_config.yaml
+      2. In configs/ subfolder      e.g. configs/global_config.yaml
+    Both _ROOT-relative and cwd-relative are tried for each location.
+    """
+    candidates = [
+        os.path.join(_ROOT, filename),
+        os.path.join(os.getcwd(), filename),
+        os.path.join(_ROOT, "configs", filename),
+        os.path.join(os.getcwd(), "configs", filename),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
     raise FileNotFoundError(
-        f"Config not found at '{config_path}' or '{cwd_path}'.\n"
-        f"Make sure the configs/ folder is committed to git and you are "
-        f"running from the repo root."
+        f"Cannot find '{filename}'. Tried:\n" +
+        "\n".join(f"  {p}" for p in candidates)
     )
+
+
+def load_config(config_path: str) -> dict:
+    with open(config_path) as f:
+        return yaml.safe_load(f)
 
 
 def load_global_config() -> dict:
-    # Try __file__-relative first, then cwd-relative
-    for base in [_ROOT, os.getcwd()]:
-        path = os.path.join(base, "configs", "global_config.yaml")
-        if os.path.exists(path):
-            with open(path) as f:
-                return yaml.safe_load(f)
-    raise FileNotFoundError(
-        "configs/global_config.yaml not found. "
-        "Ensure the configs/ folder is committed and you are at the repo root."
-    )
+    return load_config(_find_yaml("global_config.yaml"))
 
 
 def load_module_config(module: str) -> dict:
-    filename = f"{module}_config.yaml"
-    for base in [_ROOT, os.getcwd()]:
-        path = os.path.join(base, "configs", filename)
-        if os.path.exists(path):
-            with open(path) as f:
-                return yaml.safe_load(f)
-    raise FileNotFoundError(
-        f"configs/{filename} not found. "
-        "Ensure the configs/ folder is committed and you are at the repo root."
-    )
+    return load_config(_find_yaml(f"{module}_config.yaml"))
 
 
 # ---------------------------------------------------------------------------
@@ -65,21 +58,19 @@ def load_module_config(module: str) -> dict:
 
 def train_one_horizon(
     Xi_train, Xj_train, y_train,
-    Xi_val, Xj_val, y_val,
-    input_dim: int,
-    cfg: dict,
-    horizon: int,
-    time_limit: Optional[float] = None,
-    force_lgbm: bool = False,
+    Xi_val,   Xj_val,   y_val,
+    input_dim:           int,
+    cfg:                 dict,
+    horizon:             int,
+    time_limit:          Optional[float] = None,
+    force_lgbm:          bool = False,
 ) -> Tuple[object, str, dict]:
     """
     Train model for a single horizon.
     Falls back to LightGBM if Siamese exceeds time limit or fails.
-
-    Returns:
-        model, backend_name ("siamese" or "lgbm"), history dict
+    Returns: model, backend_name ("siamese" or "lgbm"), history dict
     """
-    global_cfg = load_global_config()
+    global_cfg  = load_global_config()
     siamese_cfg = global_cfg.get("siamese", {})
     lgbm_cfg    = global_cfg.get("lgbm", {})
     threshold   = time_limit or global_cfg.get("training", {}).get("time_threshold_seconds", 600)
@@ -92,7 +83,7 @@ def train_one_horizon(
         try:
             model, history = train_siamese(
                 Xi_train, Xj_train, y_train,
-                Xi_val, Xj_val, y_val,
+                Xi_val,   Xj_val,   y_val,
                 input_dim=input_dim,
                 hidden_dims=siamese_cfg.get("hidden_dims", [64, 32]),
                 head_dims=siamese_cfg.get("head_dims", [32, 16]),
@@ -132,21 +123,19 @@ def train_one_horizon(
 
 def train_all_horizons(
     df,
-    universe: List[str],
-    module_cfg: dict,
-    global_cfg: dict,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    force_lgbm: bool = False,
+    universe:    List[str],
+    module_cfg:  dict,
+    global_cfg:  dict,
+    start_date:  Optional[str] = None,
+    end_date:    Optional[str] = None,
+    force_lgbm:  bool = False,
 ) -> Dict[int, Tuple[object, str]]:
-    """
-    Train models for H = 1, 3, 5 days. Returns {horizon: (model, backend_name)}.
-    """
+    """Train models for H = 1, 3, 5 days. Returns {horizon: (model, backend)}."""
     from dataset import build_pairwise_dataset, temporal_split, date_range_split
 
     horizons    = global_cfg.get("holding_periods", [1, 3, 5])
     train_ratio = global_cfg.get("training", {}).get("train_ratio", 0.80)
-    val_ratio   = global_cfg.get("training", {}).get("val_ratio", 0.10)
+    val_ratio   = global_cfg.get("training", {}).get("val_ratio",   0.10)
     models      = {}
 
     for h in horizons:
@@ -184,7 +173,7 @@ def train_all_horizons(
 
 def save_all_models(models: Dict[int, Tuple[object, str]], module: str, base_path: str):
     from siamese_model import save_model
-    from lgbm_model import save_lgbm
+    from lgbm_model    import save_lgbm
 
     os.makedirs(base_path, exist_ok=True)
     for h, (model, backend) in models.items():
