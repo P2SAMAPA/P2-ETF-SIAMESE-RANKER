@@ -1,0 +1,97 @@
+name: Equity Module — Train + Predict
+
+on:
+  # ── Manual trigger only ───────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: "Model backend"
+        required: true
+        default: "siamese"
+        type: choice
+        options:
+          - siamese
+          - lgbm
+      run_backtest:
+        description: "Run full backtest?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_SOURCE_DATASET: P2SAMAPA/fi-etf-macro-signal-master-data
+  HF_RESULTS_DATASET: P2SAMAPA/p2-etf-siamese-ranker-results
+  TORCH_DEVICE: cpu
+
+jobs:
+  equity-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve flags
+        id: flags
+        run: |
+          LGBM_FLAG=""
+          if [ "${{ github.event.inputs.backend }}" = "lgbm" ]; then LGBM_FLAG="--lgbm"; fi
+          BT_FLAG=""
+          if [ "${{ github.event.inputs.run_backtest }}" = "false" ]; then BT_FLAG="--no-backtest"; fi
+          echo "lgbm_flag=$LGBM_FLAG" >> $GITHUB_OUTPUT
+          echo "bt_flag=$BT_FLAG"     >> $GITHUB_OUTPUT
+
+      - name: Create output directories
+        run: mkdir -p outputs/models outputs/backtest outputs/rankings outputs/features data
+
+      - name: Train Equity
+        run: python equity_train.py ${{ steps.flags.outputs.lgbm_flag }}
+
+      - name: Predict Equity
+        run: python equity_predict.py ${{ steps.flags.outputs.lgbm_flag }} ${{ steps.flags.outputs.bt_flag }}
+
+      - name: Upload Equity outputs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: equity-outputs-${{ github.run_id }}
+          path: |
+            outputs/equity_output.json
+            outputs/backtest/equity_*.json
+          retention-days: 30
+
+      - name: Equity Summary
+        if: always()
+        run: |
+          echo "## Equity Module Summary" >> $GITHUB_STEP_SUMMARY
+          if [ -f outputs/equity_output.json ]; then
+            python - <<'EOF'
+          import json, os
+          d = json.load(open("outputs/equity_output.json"))
+          fs = d["fixed_split"]
+          sw = d["shrinking_window"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"| | Fixed Split | Shrinking Window |\n")
+              f.write(f"|---|---|---|\n")
+              f.write(f"| **Top Pick** | **{fs['top_pick']}** | **{sw['top_pick']}** |\n")
+              f.write(f"| Conviction | {fs['top_conviction']*100:.1f}% | {sw['top_conviction']*100:.1f}% |\n")
+              f.write(f"| Horizon | {fs['best_horizon_days']}d | {sw['best_horizon_days']}d |\n")
+              f.write(f"| Backend | {fs['model_backend']} | {sw['model_backend']} |\n")
+          EOF
+          fi

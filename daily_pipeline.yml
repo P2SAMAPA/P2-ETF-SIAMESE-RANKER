@@ -1,0 +1,143 @@
+name: Daily Pipeline — Train + Predict
+
+on:
+  # ── Scheduled: 22:00 UTC Mon–Fri ──────────────────────────────────────────
+  schedule:
+    - cron: "0 22 * * 1-5"
+
+  # ── Manual trigger from GitHub UI ─────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "Which module to run"
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - both
+          - fi
+          - equity
+      backend:
+        description: "Model backend"
+        required: true
+        default: "siamese"
+        type: choice
+        options:
+          - siamese
+          - lgbm
+      run_backtest:
+        description: "Run full backtest?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_SOURCE_DATASET: P2SAMAPA/fi-etf-macro-signal-master-data
+  HF_RESULTS_DATASET: P2SAMAPA/p2-etf-siamese-ranker-results
+  TORCH_DEVICE: cpu
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ─────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # ── 3. Install dependencies ──────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Resolve run flags ─────────────────────────────────────────────────
+      - name: Resolve run parameters
+        id: params
+        run: |
+          # On schedule → always run both modules, siamese, with backtest
+          MODULE="${{ github.event.inputs.module || 'both' }}"
+          BACKEND="${{ github.event.inputs.backend || 'siamese' }}"
+          RUN_BT="${{ github.event.inputs.run_backtest || 'true' }}"
+
+          LGBM_FLAG=""
+          if [ "$BACKEND" = "lgbm" ]; then LGBM_FLAG="--lgbm"; fi
+
+          BT_FLAG=""
+          if [ "$RUN_BT" = "false" ]; then BT_FLAG="--no-backtest"; fi
+
+          echo "module=$MODULE"       >> $GITHUB_OUTPUT
+          echo "lgbm_flag=$LGBM_FLAG" >> $GITHUB_OUTPUT
+          echo "bt_flag=$BT_FLAG"     >> $GITHUB_OUTPUT
+
+      # ── 5. Create output dirs ────────────────────────────────────────────────
+      - name: Create output directories
+        run: mkdir -p outputs/models outputs/backtest outputs/rankings outputs/features data
+
+      # ── 6a. Run FI module ────────────────────────────────────────────────────
+      - name: Train + Predict — FI Module
+        if: ${{ steps.params.outputs.module == 'both' || steps.params.outputs.module == 'fi' }}
+        run: |
+          echo "=== FI: Training ==="
+          python fi_train.py ${{ steps.params.outputs.lgbm_flag }}
+
+          echo "=== FI: Predicting ==="
+          python fi_predict.py ${{ steps.params.outputs.lgbm_flag }} ${{ steps.params.outputs.bt_flag }}
+
+      # ── 6b. Run Equity module ────────────────────────────────────────────────
+      - name: Train + Predict — Equity Module
+        if: ${{ steps.params.outputs.module == 'both' || steps.params.outputs.module == 'equity' }}
+        run: |
+          echo "=== Equity: Training ==="
+          python equity_train.py ${{ steps.params.outputs.lgbm_flag }}
+
+          echo "=== Equity: Predicting ==="
+          python equity_predict.py ${{ steps.params.outputs.lgbm_flag }} ${{ steps.params.outputs.bt_flag }}
+
+      # ── 7. Upload output artefacts ───────────────────────────────────────────
+      - name: Upload outputs as artefacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-outputs-${{ github.run_id }}
+          path: |
+            outputs/fi_output.json
+            outputs/equity_output.json
+            outputs/backtest/
+          retention-days: 30
+
+      # ── 8. Summary ───────────────────────────────────────────────────────────
+      - name: Print summary
+        if: always()
+        run: |
+          echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | ${{ steps.params.outputs.module }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend | ${{ github.event.inputs.backend || 'siamese' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backtest | ${{ github.event.inputs.run_backtest || 'true' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | ${{ github.run_id }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f outputs/fi_output.json ]; then
+            FI_PICK=$(python -c "import json; d=json.load(open('outputs/fi_output.json')); print(d['fixed_split']['top_pick'])")
+            FI_CONV=$(python -c "import json; d=json.load(open('outputs/fi_output.json')); print(f\"{d['fixed_split']['top_conviction']*100:.1f}%\")")
+            echo "| FI Top Pick | **$FI_PICK** ($FI_CONV) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f outputs/equity_output.json ]; then
+            EQ_PICK=$(python -c "import json; d=json.load(open('outputs/equity_output.json')); print(d['fixed_split']['top_pick'])")
+            EQ_CONV=$(python -c "import json; d=json.load(open('outputs/equity_output.json')); print(f\"{d['fixed_split']['top_conviction']*100:.1f}%\")")
+            echo "| Equity Top Pick | **$EQ_PICK** ($EQ_CONV) |" >> $GITHUB_STEP_SUMMARY
+          fi
