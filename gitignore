@@ -1,6 +1,12 @@
 # ── Secrets ───────────────────────────────────────────────
 .env
 
+# ── Always commit these (never ignore) ────────────────────
+!configs/
+!configs/*.yaml
+!outputs/fi_output.json
+!outputs/equity_output.json
+
 # ── Python ────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
