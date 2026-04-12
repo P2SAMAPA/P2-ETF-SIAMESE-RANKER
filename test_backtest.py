@@ -139,10 +139,13 @@ class TestConsensusScore:
 class TestConvictionScores:
 
     def _make_mock_model(self, p_fixed=0.6):
-        """Model that always returns p_fixed for P(i>j)."""
+        """Model that always returns p_fixed for P(i>j).
+        Returns a 1-element array so np.asarray(_raw).flat[0] works correctly.
+        """
         class MockModel:
             def predict_proba(self, xi, xj, **kwargs):
-                return np.array([p_fixed] * xi.shape[0])
+                # Return shape (n,) — inference.py uses .flat[0] to extract scalar
+                return np.full(xi.shape[0], p_fixed, dtype=np.float32)
         return MockModel()
 
     def test_conviction_keys(self):
