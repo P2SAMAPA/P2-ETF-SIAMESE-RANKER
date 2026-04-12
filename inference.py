@@ -33,7 +33,8 @@ def compute_conviction_scores(
     for ei, ej in combinations(valid, 2):
         xi = feature_dict[ei].reshape(1, -1)
         xj = feature_dict[ej].reshape(1, -1)
-        p_ij = float(model.predict_proba(xi, xj, device=device))
+        _raw = model.predict_proba(xi, xj, device=device)
+        p_ij = float(np.asarray(_raw).flat[0])  # safely extract scalar from any array shape
         scores[ei] += p_ij
         scores[ej] += (1.0 - p_ij)
 
