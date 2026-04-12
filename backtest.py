@@ -266,13 +266,28 @@ def run_shrinking_window_backtest(
     consensus_ranking  = sorted(consensus.items(), key=lambda x: x[1], reverse=True)
     consensus_etf      = consensus_ranking[0][0] if consensus_ranking else None
 
+    # Normalise consensus scores to [0, 1] so they display correctly as conviction %
+    # Raw scores are composite (ann_return * 0.6 + sharpe * 0.2 - max_dd * 0.2)
+    # and are not naturally bounded — normalise using min-max across all ETFs
+    if consensus_ranking:
+        raw_scores  = [s for _, s in consensus_ranking]
+        score_min   = min(raw_scores)
+        score_max   = max(raw_scores)
+        score_range = score_max - score_min if score_max != score_min else 1.0
+        consensus_ranking_normalised = [
+            {"etf": e, "score": round((s - score_min) / score_range, 4)}
+            for e, s in consensus_ranking
+        ]
+    else:
+        consensus_ranking_normalised = []
+
     logger.info(f"Consensus ETF: {consensus_etf}")
 
     return {
         "mode":              "shrinking_window",
         "n_windows":         len(window_results),
         "consensus_etf":     consensus_etf,
-        "consensus_ranking": [{"etf": e, "score": round(s, 4)} for e, s in consensus_ranking],
+        "consensus_ranking": consensus_ranking_normalised,
         "window_results":    window_results,
         "consensus_inputs":  consensus_inputs,
     }
