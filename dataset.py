@@ -195,7 +195,10 @@ def date_range_split(
     val_ratio:   float = 0.10,
 ) -> dict:
     """Split within a specific date range (used for shrinking window)."""
-    mask = (dates >= np.datetime64(start_date)) & (dates <= np.datetime64(end_date))
+    # Convert to pd.Timestamp for safe comparison regardless of date type
+    ts_start = pd.Timestamp(start_date)
+    ts_end   = pd.Timestamp(end_date)
+    mask = np.array([pd.Timestamp(d) >= ts_start and pd.Timestamp(d) <= ts_end for d in dates])
     return temporal_split(Xi[mask], Xj[mask], y[mask], dates[mask], train_ratio, val_ratio)
 
 
