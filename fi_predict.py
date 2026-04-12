@@ -52,7 +52,9 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
 
     if run_backtest:
         sw_bt = run_shrinking_window_backtest(
-            df, universe, module_cfg, global_cfg, benchmark, force_lgbm=force_lgbm
+            df, universe, module_cfg, global_cfg, benchmark,
+            force_lgbm=force_lgbm,
+            best_horizon=result["best_horizon"],
         )
         # Fall back to fixed-split ranking if shrinking window produced no results
         sw_ranking = sw_bt.get("consensus_ranking") or result["ranking"]
