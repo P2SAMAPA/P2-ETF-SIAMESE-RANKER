@@ -53,7 +53,8 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
         sw_bt = run_shrinking_window_backtest(
             df, universe, module_cfg, global_cfg, benchmark, force_lgbm=force_lgbm
         )
-        sw_ranking = sw_bt.get("consensus_ranking", result["ranking"])
+        # Fall back to fixed-split ranking if shrinking window produced no results
+        sw_ranking = sw_bt.get("consensus_ranking") or result["ranking"]
         output_sw  = format_output(
             module="equity", ranking=sw_ranking,
             conviction={r["etf"]: r["score"] for r in sw_ranking},
