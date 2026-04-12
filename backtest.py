@@ -172,7 +172,8 @@ def run_shrinking_window_backtest(
         last_year  = window_df.index.max().year
         oos_start  = f"{last_year - 1}-01-01"
         train_end  = f"{last_year - 1}-12-31"
-        train_df   = window_df[window_df.index <= train_end]
+        # Use pd.Timestamp for safe comparison with DatetimeIndex
+        train_df   = window_df[window_df.index <= pd.Timestamp(train_end)]
 
         logger.info(f"=== Window {sy}→{end_date} | OOS: {oos_start}→{end_date} ===")
 
@@ -188,7 +189,7 @@ def run_shrinking_window_backtest(
         if not models:
             continue
 
-        oos_df          = window_df[window_df.index >= oos_start]
+        oos_df          = window_df[window_df.index >= pd.Timestamp(oos_start)]
         model_by_h      = {h: m for h, (m, _) in models.items()}
 
         strat, bench, picks = build_strategy_returns(
