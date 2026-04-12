@@ -146,10 +146,20 @@ def run_shrinking_window_backtest(
     module_cfg: dict,
     global_cfg: dict,
     benchmark: str,
-    device:      str  = "cpu",
-    force_lgbm:  bool = False,
+    device:       str  = "cpu",
+    force_lgbm:   bool = False,
+    best_horizon: int  = 1,
 ) -> Dict:
-    from train   import train_all_horizons
+    """
+    Shrinking window backtest.
+
+    Speed optimisations vs naive approach:
+      - Always uses LightGBM (fast CPU ranker) regardless of force_lgbm flag
+      - Only trains on the single best horizon (determined by fixed-split run)
+      - Prebuilds the full pairwise dataset once per horizon and slices by date
+    """
+    from train   import train_one_horizon, load_global_config
+    from dataset import build_pairwise_dataset, date_range_split
     from metrics import compute_all_metrics, compute_cumulative_returns, compute_consensus_score
 
     bt_cfg      = global_cfg.get("backtest", {})
@@ -157,31 +167,56 @@ def run_shrinking_window_backtest(
         bt_cfg.get("shrinking_start_year", 2008),
         bt_cfg.get("shrinking_end_year",   2024) + 1,
     )
-    end_date = df.index.max().strftime("%Y-%m-%d")
+    end_date   = df.index.max().strftime("%Y-%m-%d")
+    train_ratio = global_cfg.get("training", {}).get("train_ratio", 0.80)
+    val_ratio   = global_cfg.get("training", {}).get("val_ratio",   0.10)
+
+    # ── Pre-build full pairwise dataset for best_horizon once ────────────────
+    logger.info(f"Shrinking window: pre-building pairwise dataset H={best_horizon}...")
+    Xi_all, Xj_all, y_all, dates_all = build_pairwise_dataset(
+        df, universe, horizon=best_horizon
+    )
+    logger.info(f"Full pairwise dataset: {len(y_all)} pairs")
 
     window_results, consensus_inputs = [], []
 
     for sy in start_years:
-        win_start  = f"{sy}-01-01"
-        window_df  = df[df.index >= win_start]
+        win_start = f"{sy}-01-01"
+        window_df = df[df.index >= win_start]
 
         if len(window_df) < 252:
             logger.warning(f"Window {sy}: only {len(window_df)} rows — skipping.")
             continue
 
-        last_year  = window_df.index.max().year
-        oos_start  = f"{last_year - 1}-01-01"
-        train_end  = f"{last_year - 1}-12-31"
-        # Use pd.Timestamp for safe comparison with DatetimeIndex
-        train_df   = window_df[window_df.index <= pd.Timestamp(train_end)]
+        last_year = window_df.index.max().year
+        oos_start = f"{last_year - 1}-01-01"
+        train_end = f"{last_year - 1}-12-31"
+        train_df  = window_df[window_df.index <= pd.Timestamp(train_end)]
 
         logger.info(f"=== Window {sy}→{end_date} | OOS: {oos_start}→{end_date} ===")
 
         try:
-            models = train_all_horizons(
-                train_df, universe, module_cfg, global_cfg,
-                start_date=win_start, end_date=train_end, force_lgbm=force_lgbm,
+            # Slice pre-built pairwise dataset to this window's train range
+            splits = date_range_split(
+                Xi_all, Xj_all, y_all, dates_all,
+                win_start, train_end, train_ratio, val_ratio
             )
+            Xi_tr, Xj_tr, y_tr, _ = splits["train"]
+            Xi_vl, Xj_vl, y_vl, _ = splits["val"]
+
+            if len(y_tr) < 100:
+                logger.warning(f"Window {sy}: too few training pairs ({len(y_tr)}), skipping.")
+                continue
+
+            # Always use LightGBM for speed in shrinking window
+            model, backend, _ = train_one_horizon(
+                Xi_tr, Xj_tr, y_tr, Xi_vl, Xj_vl, y_vl,
+                input_dim=Xi_tr.shape[1],
+                cfg=module_cfg,
+                horizon=best_horizon,
+                force_lgbm=True,   # always LGBM for shrinking window speed
+            )
+            models = {best_horizon: (model, backend)}
         except Exception as e:
             logger.error(f"Window {sy}: training failed: {e}")
             continue
