@@ -164,7 +164,7 @@ def render_hero_card(output_data: Dict, module_label: str):
     fs = output_data.get("fixed_split", sw)
 
     top_etf = sw.get("top_pick", "—")
-    conviction = sw.get("top_conviction", 0)
+    conviction = min(float(sw.get("top_conviction", 0)), 1.0)  # clamp to [0,1]
     signal_date = sw.get("signal_date", "—")
     generated = sw.get("generated_utc", "—")
     source = sw.get("source", "shrinking_window").replace("_", " ").title()
