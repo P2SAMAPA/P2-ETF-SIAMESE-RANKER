@@ -151,6 +151,54 @@ def parse_cum_returns(data: Dict) -> pd.DataFrame:
     return df
 
 
+def convert_to_us_market_date(date_str: str) -> str:
+    """Convert UTC date to US market date (Eastern Time)."""
+    if date_str == "—" or not isinstance(date_str, str):
+        return date_str
+    
+    try:
+        # Try to parse the date
+        date_obj = pd.to_datetime(date_str)
+        
+        # If it's timezone-naive, assume UTC
+        if date_obj.tzinfo is None:
+            date_obj = date_obj.tz_localize('UTC')
+        
+        # Convert to US Eastern Time
+        eastern = pytz.timezone('US/Eastern')
+        eastern_date = date_obj.tz_convert(eastern)
+        
+        # Format as YYYY-MM-DD
+        return eastern_date.strftime('%Y-%m-%d')
+    except Exception:
+        # Fallback: if conversion fails, return original
+        return date_str
+
+
+def convert_to_us_market_datetime(date_str: str) -> str:
+    """Convert UTC datetime to US Eastern Time for display."""
+    if date_str == "—" or not isinstance(date_str, str):
+        return date_str
+    
+    try:
+        # Try to parse the datetime
+        date_obj = pd.to_datetime(date_str)
+        
+        # If it's timezone-naive, assume UTC
+        if date_obj.tzinfo is None:
+            date_obj = date_obj.tz_localize('UTC')
+        
+        # Convert to US Eastern Time
+        eastern = pytz.timezone('US/Eastern')
+        eastern_date = date_obj.tz_convert(eastern)
+        
+        # Format for display
+        return eastern_date.strftime('%Y-%m-%d %H:%M ET')
+    except Exception:
+        # Fallback: if conversion fails, return original
+        return date_str
+
+
 # ── UI Components ─────────────────────────────────────────────────────────────
 
 def render_hero_card(output_data: Dict, module_label: str):
@@ -165,8 +213,14 @@ def render_hero_card(output_data: Dict, module_label: str):
 
     top_etf = sw.get("top_pick", "—")
     conviction = min(float(sw.get("top_conviction", 0)), 1.0)  # clamp to [0,1]
-    signal_date = sw.get("signal_date", "—")
-    generated = sw.get("generated_utc", "—")
+    
+    # Convert dates to US market timezone
+    signal_date_raw = sw.get("signal_date", "—")
+    generated_raw = sw.get("generated_utc", "—")
+    
+    signal_date = convert_to_us_market_date(signal_date_raw)
+    generated = convert_to_us_market_datetime(generated_raw)
+    
     source = sw.get("source", "shrinking_window").replace("_", " ").title()
     horizon = sw.get("best_horizon_days", "—")
     backend = sw.get("model_backend", "siamese").upper()
@@ -326,6 +380,14 @@ def render_signal_history(module: str):
             df["actual_return"] = df["actual_return"].apply(
                 lambda x: f"{float(x)*100:.2f}%" if x not in [None, "—", ""] else "—"
             )
+        
+        # Convert dates in signal history to US market dates if possible
+        if "date" in df.columns:
+            try:
+                import pytz
+                df["date"] = df["date"].apply(convert_to_us_market_date)
+            except:
+                pass  # Keep original if pytz not available
 
     n_hits = len(df[df.get("hit", pd.Series()) == "✅"]) if "hit" in df.columns else 0
     n_total = len(df[df.get("actual_return", pd.Series()) != "—"]) if "actual_return" in df.columns else 0
@@ -339,7 +401,7 @@ def render_signal_history(module: str):
         use_container_width=True,
         hide_index=True,
         column_config={
-            "date": "Date",
+            "date": "Date (US Market)",
             "pick": "Pick",
             "conviction": "Conviction",
             "actual_return": "Actual Return",
@@ -493,9 +555,27 @@ def render_sidebar():
                     d = json.load(f)
                 generated = d.get("fixed_split", {}).get("generated_utc", "—")
                 if generated != "—":
+                    # Convert to US Eastern for display
+                    try:
+                        import pytz
+                        generated = convert_to_us_market_datetime(generated)
+                    except:
+                        pass
                     last_run = generated
                     break
         st.caption(f"Last run: {last_run}")
+
+
+# Try to import pytz for timezone conversion
+try:
+    import pytz
+except ImportError:
+    # Fallback: define dummy functions if pytz not available
+    st.warning("pytz not installed. Install with: pip install pytz")
+    def convert_to_us_market_date(date_str: str) -> str:
+        return date_str
+    def convert_to_us_market_datetime(date_str: str) -> str:
+        return date_str
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
