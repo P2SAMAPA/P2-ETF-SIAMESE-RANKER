@@ -1,7 +1,7 @@
 name: Daily Pipeline — Train + Predict
 
 on:
-  # ── Scheduled: 2:00 UTC Mon–Fri ──────────────────────────────────────────
+  # ── Scheduled: 24:00 UTC Mon–Fri ──────────────────────────────────────────
   schedule:
     - cron: "0 22 * * 1-5"
 
