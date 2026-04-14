@@ -151,30 +151,6 @@ def parse_cum_returns(data: Dict) -> pd.DataFrame:
     return df
 
 
-def fix_us_market_date(date_str: str) -> str:
-    """
-    Fix date for US market display.
-    If the date appears to be ahead (showing tomorrow's date), subtract one day.
-    This handles the UTC vs US Eastern timezone issue.
-    """
-    if date_str == "—" or not isinstance(date_str, str):
-        return date_str
-    
-    try:
-        # Parse the date
-        current_date = pd.to_datetime(date_str).date()
-        today_us = datetime.now().date()
-        
-        # If the date is in the future (tomorrow), subtract one day
-        if current_date > today_us:
-            corrected_date = current_date - timedelta(days=1)
-            return corrected_date.strftime('%Y-%m-%d')
-        else:
-            return current_date.strftime('%Y-%m-%d')
-    except Exception:
-        return date_str
-
-
 # ── UI Components ─────────────────────────────────────────────────────────────
 
 def render_hero_card(output_data: Dict, module_label: str):
@@ -190,27 +166,9 @@ def render_hero_card(output_data: Dict, module_label: str):
     top_etf = sw.get("top_pick", "—")
     conviction = min(float(sw.get("top_conviction", 0)), 1.0)  # clamp to [0,1]
     
-    # Fix the date for US market display
-    signal_date_raw = sw.get("signal_date", "—")
-    generated_raw = sw.get("generated_utc", "—")
-    
-    # Apply US market date fix
-    signal_date = fix_us_market_date(signal_date_raw)
-    
-    # For generated time, just extract date part if it's showing future date
-    if generated_raw != "—" and isinstance(generated_raw, str):
-        try:
-            gen_date = pd.to_datetime(generated_raw).date()
-            today_us = datetime.now().date()
-            if gen_date > today_us:
-                # If generation date is in future, it's likely UTC date, show as is with note
-                generated = f"{generated_raw} UTC"
-            else:
-                generated = generated_raw
-        except:
-            generated = generated_raw
-    else:
-        generated = generated_raw
+    # Use dates as-is from the data - NO MANIPULATION
+    signal_date = sw.get("signal_date", "—")
+    generated = sw.get("generated_utc", "—")
     
     source = sw.get("source", "shrinking_window").replace("_", " ").title()
     horizon = sw.get("best_horizon_days", "—")
@@ -371,10 +329,6 @@ def render_signal_history(module: str):
             df["actual_return"] = df["actual_return"].apply(
                 lambda x: f"{float(x)*100:.2f}%" if x not in [None, "—", ""] else "—"
             )
-        
-        # Fix dates in signal history
-        if "date" in df.columns:
-            df["date"] = df["date"].apply(fix_us_market_date)
 
     n_hits = len(df[df.get("hit", pd.Series()) == "✅"]) if "hit" in df.columns else 0
     n_total = len(df[df.get("actual_return", pd.Series()) != "—"]) if "actual_return" in df.columns else 0
@@ -388,7 +342,7 @@ def render_signal_history(module: str):
         use_container_width=True,
         hide_index=True,
         column_config={
-            "date": "Date (US Market)",
+            "date": "Date",
             "pick": "Pick",
             "conviction": "Conviction",
             "actual_return": "Actual Return",
@@ -542,7 +496,6 @@ def render_sidebar():
                     d = json.load(f)
                 generated = d.get("fixed_split", {}).get("generated_utc", "—")
                 if generated != "—":
-                    # Just show the generated time as is
                     last_run = generated
                     break
         st.caption(f"Last run: {last_run}")
