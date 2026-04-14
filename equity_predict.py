@@ -8,6 +8,8 @@ import logging
 import os
 import json
 import argparse
+from datetime import datetime
+import pytz
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,7 +31,11 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
     logger.info("=== Equity Prediction ===")
 
     df          = load_source_data()
-    signal_date = df.index.max().strftime("%Y-%m-%d")
+    
+    # Use current US Eastern Time for signal date (today's market date)
+    us_eastern = pytz.timezone('US/Eastern')
+    signal_date = datetime.now(us_eastern).strftime("%Y-%m-%d")
+    logger.info(f"Signal date set to US market date: {signal_date}")
 
     models = train_all_horizons(df, universe, module_cfg, global_cfg, force_lgbm=force_lgbm)
     if not models:
