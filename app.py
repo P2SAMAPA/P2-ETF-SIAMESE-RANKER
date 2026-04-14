@@ -151,51 +151,27 @@ def parse_cum_returns(data: Dict) -> pd.DataFrame:
     return df
 
 
-def convert_to_us_market_date(date_str: str) -> str:
-    """Convert UTC date to US market date (Eastern Time)."""
+def fix_us_market_date(date_str: str) -> str:
+    """
+    Fix date for US market display.
+    If the date appears to be ahead (showing tomorrow's date), subtract one day.
+    This handles the UTC vs US Eastern timezone issue.
+    """
     if date_str == "—" or not isinstance(date_str, str):
         return date_str
     
     try:
-        # Try to parse the date
-        date_obj = pd.to_datetime(date_str)
+        # Parse the date
+        current_date = pd.to_datetime(date_str).date()
+        today_us = datetime.now().date()
         
-        # If it's timezone-naive, assume UTC
-        if date_obj.tzinfo is None:
-            date_obj = date_obj.tz_localize('UTC')
-        
-        # Convert to US Eastern Time
-        eastern = pytz.timezone('US/Eastern')
-        eastern_date = date_obj.tz_convert(eastern)
-        
-        # Format as YYYY-MM-DD
-        return eastern_date.strftime('%Y-%m-%d')
+        # If the date is in the future (tomorrow), subtract one day
+        if current_date > today_us:
+            corrected_date = current_date - timedelta(days=1)
+            return corrected_date.strftime('%Y-%m-%d')
+        else:
+            return current_date.strftime('%Y-%m-%d')
     except Exception:
-        # Fallback: if conversion fails, return original
-        return date_str
-
-
-def convert_to_us_market_datetime(date_str: str) -> str:
-    """Convert UTC datetime to US Eastern Time for display."""
-    if date_str == "—" or not isinstance(date_str, str):
-        return date_str
-    
-    try:
-        # Try to parse the datetime
-        date_obj = pd.to_datetime(date_str)
-        
-        # If it's timezone-naive, assume UTC
-        if date_obj.tzinfo is None:
-            date_obj = date_obj.tz_localize('UTC')
-        
-        # Convert to US Eastern Time
-        eastern = pytz.timezone('US/Eastern')
-        eastern_date = date_obj.tz_convert(eastern)
-        
-        # Format for display
-        return eastern_date.strftime('%Y-%m-%d %H:%M ET')
-    except Exception:
-        # Fallback: if conversion fails, return original
         return date_str
 
 
@@ -214,12 +190,27 @@ def render_hero_card(output_data: Dict, module_label: str):
     top_etf = sw.get("top_pick", "—")
     conviction = min(float(sw.get("top_conviction", 0)), 1.0)  # clamp to [0,1]
     
-    # Convert dates to US market timezone
+    # Fix the date for US market display
     signal_date_raw = sw.get("signal_date", "—")
     generated_raw = sw.get("generated_utc", "—")
     
-    signal_date = convert_to_us_market_date(signal_date_raw)
-    generated = convert_to_us_market_datetime(generated_raw)
+    # Apply US market date fix
+    signal_date = fix_us_market_date(signal_date_raw)
+    
+    # For generated time, just extract date part if it's showing future date
+    if generated_raw != "—" and isinstance(generated_raw, str):
+        try:
+            gen_date = pd.to_datetime(generated_raw).date()
+            today_us = datetime.now().date()
+            if gen_date > today_us:
+                # If generation date is in future, it's likely UTC date, show as is with note
+                generated = f"{generated_raw} UTC"
+            else:
+                generated = generated_raw
+        except:
+            generated = generated_raw
+    else:
+        generated = generated_raw
     
     source = sw.get("source", "shrinking_window").replace("_", " ").title()
     horizon = sw.get("best_horizon_days", "—")
@@ -381,13 +372,9 @@ def render_signal_history(module: str):
                 lambda x: f"{float(x)*100:.2f}%" if x not in [None, "—", ""] else "—"
             )
         
-        # Convert dates in signal history to US market dates if possible
+        # Fix dates in signal history
         if "date" in df.columns:
-            try:
-                import pytz
-                df["date"] = df["date"].apply(convert_to_us_market_date)
-            except:
-                pass  # Keep original if pytz not available
+            df["date"] = df["date"].apply(fix_us_market_date)
 
     n_hits = len(df[df.get("hit", pd.Series()) == "✅"]) if "hit" in df.columns else 0
     n_total = len(df[df.get("actual_return", pd.Series()) != "—"]) if "actual_return" in df.columns else 0
@@ -555,27 +542,10 @@ def render_sidebar():
                     d = json.load(f)
                 generated = d.get("fixed_split", {}).get("generated_utc", "—")
                 if generated != "—":
-                    # Convert to US Eastern for display
-                    try:
-                        import pytz
-                        generated = convert_to_us_market_datetime(generated)
-                    except:
-                        pass
+                    # Just show the generated time as is
                     last_run = generated
                     break
         st.caption(f"Last run: {last_run}")
-
-
-# Try to import pytz for timezone conversion
-try:
-    import pytz
-except ImportError:
-    # Fallback: define dummy functions if pytz not available
-    st.warning("pytz not installed. Install with: pip install pytz")
-    def convert_to_us_market_date(date_str: str) -> str:
-        return date_str
-    def convert_to_us_market_datetime(date_str: str) -> str:
-        return date_str
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
