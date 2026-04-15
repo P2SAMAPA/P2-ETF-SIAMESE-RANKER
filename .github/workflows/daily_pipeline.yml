@@ -3,7 +3,7 @@ name: Daily Pipeline — Train + Predict
 on:
   # ── Scheduled: 24:00 UTC Mon–Fri ──────────────────────────────────────────
   schedule:
-    - cron: "0 22 * * 1-5"
+    - cron: "0 23 * * 1-5"
 
   # ── Manual trigger from GitHub UI ─────────────────────────────────────────
   workflow_dispatch:
