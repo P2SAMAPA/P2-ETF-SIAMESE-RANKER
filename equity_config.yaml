@@ -14,6 +14,9 @@ universe:
   - XME
   - GDX
   - IWM
+  - IWF
+  - XBI
+  - XSD
   - XLB
   - XLRE
 
