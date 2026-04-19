@@ -170,23 +170,26 @@ def render_hero_card(output_data: Dict, module_label: str):
         st.info("No signal available. Run predict to generate a ranking.")
         return
 
-    # Prefer shrinking window output for hero
-    sw = output_data.get("shrinking_window", output_data.get("fixed_split", {}))
-    fs = output_data.get("fixed_split", sw)
+    fs     = output_data.get("fixed_split", {})
+    sw_raw = output_data.get("shrinking_window", {})
 
-    top_etf = sw.get("top_pick", "—")
-    conviction = min(float(sw.get("top_conviction", 0)), 1.0)  # clamp to [0,1]
-    
-    # Use dates as-is from the data - NO MANIPULATION
-    signal_date = sw.get("signal_date", "—")
-    generated = sw.get("generated_utc", "—")
-    
-    source = sw.get("source", "shrinking_window").replace("_", " ").title()
-    horizon = sw.get("best_horizon_days", "—")
-    backend = sw.get("model_backend", "siamese").upper()
+    # Use shrinking window only when it has a genuine multi-ETF ranking.
+    # SW consensus collapses to score=0.0 when only 1 ETF survives normalisation.
+    def _is_valid(section):
+        return len(section.get("ranking", [])) >= 2 and float(section.get("top_conviction", 0)) > 0.0
 
-    second = sw.get("second")
-    third = sw.get("third")
+    best = sw_raw if _is_valid(sw_raw) else fs
+
+    top_etf    = best.get("top_pick", "—")
+    conviction = min(float(best.get("top_conviction", 0)), 1.0)
+    signal_date = best.get("signal_date", "—")
+    generated   = best.get("generated_utc", "—")
+    source      = best.get("source", "fixed_split").replace("_", " ").title()
+    horizon     = best.get("best_horizon_days", "—")
+    backend     = best.get("model_backend", "siamese").upper()
+
+    second = best.get("second")
+    third  = best.get("third")
 
     runners_html = ""
     if second:
@@ -456,11 +459,14 @@ def render_module_tab(module: str, benchmark_label: str, module_label: str):
 
     st.markdown('<hr class="p2-div">', unsafe_allow_html=True)
 
-    # Conviction scores — stacked bar
+    # Conviction scores — stacked bar (use best valid source)
     st.markdown("**Conviction Scores — Current Ranking**")
     if output_data:
-        sw = output_data.get("shrinking_window", output_data.get("fixed_split", {}))
-        ranking = sw.get("ranking", [])
+        fs_r  = output_data.get("fixed_split", {})
+        sw_r  = output_data.get("shrinking_window", {})
+        # Prefer SW if it has a real multi-ETF ranking, else fall back to FS
+        best_r = sw_r if (len(sw_r.get("ranking", [])) >= 2 and float(sw_r.get("top_conviction", 0)) > 0.0) else fs_r
+        ranking = best_r.get("ranking", [])
         render_stacked_conviction_chart(ranking, module)
     else:
         st.info("No ranking data available.")
