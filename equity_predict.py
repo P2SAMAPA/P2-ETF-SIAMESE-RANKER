@@ -10,13 +10,15 @@ import json
 import argparse
 from datetime import datetime
 import pytz
+import pandas as pd
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 def _backfill_returns(history: list, df: pd.DataFrame, universe: list) -> list:
     """Fill in actual_return for any past rows where it is still None/NaN."""
-    import numpy as np, pandas as pd
+
     if not history:
         return history
     price_cols = [c for c in universe if c in df.columns]
