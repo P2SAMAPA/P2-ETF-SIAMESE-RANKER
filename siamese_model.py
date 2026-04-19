@@ -47,24 +47,20 @@ class SiameseRanker(nn.Module):
         super().__init__()
         self.encoder    = Encoder(input_dim, hidden_dims, dropout)
         emb_dim         = self.encoder.output_dim
-        comparator_dim  = emb_dim  # only delta (ei-ej)
+        comparator_dim  = 4 * emb_dim
 
         head_layers, in_dim = [], comparator_dim
         for h in head_dims:
             head_layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
             in_dim = h
-        head_layers += [nn.Linear(in_dim, 1)]  # no Sigmoid here — applied antisymmetrically in forward
+        head_layers += [nn.Linear(in_dim, 1), nn.Sigmoid()]
         self.head = nn.Sequential(*head_layers)
 
     def forward(self, xi, xj):
         ei    = self.encoder(xi)
         ej    = self.encoder(xj)
         delta = ei - ej
-        # Antisymmetric scoring: sigmoid(f(delta) - f(-delta))
-        # Since score(i,j) = -score(j,i), we get P(i>j) + P(j>i) = sigmoid(s) + sigmoid(-s) = 1
-        # exactly, for any head architecture and any weights.
-        score = self.head(delta).squeeze(-1) - self.head(-delta).squeeze(-1)
-        return torch.sigmoid(score)
+        return self.head(torch.cat([ei, ej, delta, delta.abs()], dim=-1)).squeeze(-1)
 
     def predict_proba(self, xi: np.ndarray, xj: np.ndarray, device: str = "cpu") -> np.ndarray:
         self.eval()
