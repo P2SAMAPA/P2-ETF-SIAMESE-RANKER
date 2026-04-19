@@ -28,7 +28,9 @@ st.markdown("""
     background: #f9f9fb;
     font-family: 'Inter', sans-serif;
   }
-  [data-testid="stMainBlockContainer"] { padding-top: 1.5rem; }
+  [data-testid="stMainBlockContainer"] { padding-top: 2.5rem; }
+  /* Prevent Streamlit top toolbar from clipping the title */
+  header[data-testid="stHeader"] { background: transparent; }
 
   /* Title */
   .p2-title { font-size: 1.85rem; font-weight: 700; color: #1a1a2e; margin-bottom: 0; }
@@ -104,11 +106,20 @@ st.markdown("""
 
 @st.cache_data(ttl=3600)
 def load_output(module: str) -> Optional[Dict]:
-    """Load latest combined output from local file or HF."""
-    local = f"outputs/{module}_output.json"
-    if os.path.exists(local):
-        with open(local) as f:
-            return json.load(f)
+    """Load latest combined output from local file or HF.
+    Checks outputs/ subdir first, then repo-root fallback, then HF.
+    """
+    for local in [f"outputs/{module}_output.json", f"{module}_output.json"]:
+        if os.path.exists(local):
+            with open(local) as f:
+                data = json.load(f)
+            # Validate: if both sections have no real ranking, keep looking
+            has_data = any(
+                data.get(k, {}).get("top_pick", "—") not in ("—", "", None)
+                for k in ("fixed_split", "shrinking_window")
+            )
+            if has_data:
+                return data
     try:
         from hf_storage import pull_latest_ranking
         return pull_latest_ranking(module)
@@ -316,19 +327,37 @@ def render_signal_history(module: str):
     else:
         df = df.copy()
         if "actual_return" in df.columns:
-            df["hit"] = df.apply(
-                lambda r: "✅" if (r.get("actual_return") is not None and r["actual_return"] > 0)
-                else ("❌" if (r.get("actual_return") is not None) else "—"),
-                axis=1
-            )
-        # Format
+            def _hit(r):
+                v = r.get("actual_return")
+                if v is None or (isinstance(v, float) and np.isnan(v)):
+                    return "—"
+                try:
+                    return "✅" if float(v) > 0 else "❌"
+                except (ValueError, TypeError):
+                    return "—"
+            df["hit"] = df.apply(_hit, axis=1)
+        # Format conviction
         for col in ["conviction"]:
             if col in df.columns:
-                df[col] = df[col].apply(lambda x: f"{float(x)*100:.1f}%" if x not in [None, "—", ""] else "—")
+                def _fmt_conviction(x):
+                    if x is None or x == "—" or x == "":
+                        return "—"
+                    try:
+                        f = float(x)
+                        return "—" if np.isnan(f) else f"{f*100:.1f}%"
+                    except (ValueError, TypeError):
+                        return "—"
+                df[col] = df[col].apply(_fmt_conviction)
         if "actual_return" in df.columns:
-            df["actual_return"] = df["actual_return"].apply(
-                lambda x: f"{float(x)*100:.2f}%" if x not in [None, "—", ""] else "—"
-            )
+            def _fmt_return(x):
+                if x is None or x == "—" or x == "":
+                    return "—"
+                try:
+                    f = float(x)
+                    return "—" if np.isnan(f) else f"{f*100:.2f}%"
+                except (ValueError, TypeError):
+                    return "—"
+            df["actual_return"] = df["actual_return"].apply(_fmt_return)
 
     n_hits = len(df[df.get("hit", pd.Series()) == "✅"]) if "hit" in df.columns else 0
     n_total = len(df[df.get("actual_return", pd.Series()) != "—"]) if "actual_return" in df.columns else 0
