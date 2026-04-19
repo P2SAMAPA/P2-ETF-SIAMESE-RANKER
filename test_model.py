@@ -49,12 +49,11 @@ class TestSiameseRanker:
 
     def test_symmetry(self):
         """
-        P(i>j) + P(j>i) should be close to 1.
-        Exact symmetry is NOT enforced architecturally — the model uses
-        concat([Ei, Ej, dE, |dE|]) which learns near-symmetry during training
-        but random untrained weights won't sum to exactly 1.
-        We check both outputs are valid probabilities and their sum is
-        in a reasonable range rather than asserting exact equality.
+        P(i>j) + P(j>i) must equal exactly 1.
+        The model uses concat([delta, |delta|]) in the comparator head.
+        Swapping xi↔xj negates delta but preserves |delta|, so the head
+        output is antisymmetric and P(i>j) + P(j>i) = 1 by construction
+        for any weights, trained or untrained.
         """
         import torch
         from siamese_model import SiameseRanker
@@ -67,8 +66,8 @@ class TestSiameseRanker:
         # Both must be valid probabilities
         assert 0.0 <= p_ij <= 1.0
         assert 0.0 <= p_ji <= 1.0
-        # Sum should be in a reasonable range (not wildly asymmetric)
-        assert 0.8 <= p_ij + p_ji <= 1.2
+        # Antisymmetry is now architectural — sum must be exactly 1 (within float tolerance)
+        assert abs(p_ij + p_ji - 1.0) < 1e-5, f"Expected P(i>j)+P(j>i)=1, got {p_ij+p_ji:.6f}"
 
     def test_predict_proba_numpy(self):
         from siamese_model import SiameseRanker
