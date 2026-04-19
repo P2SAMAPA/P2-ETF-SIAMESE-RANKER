@@ -14,6 +14,39 @@ import pytz
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+def _backfill_returns(history: list, df: pd.DataFrame, universe: list) -> list:
+    """Fill in actual_return for any past rows where it is still None/NaN."""
+    import numpy as np, pandas as pd
+    if not history:
+        return history
+    price_cols = [c for c in universe if c in df.columns]
+    if not price_cols:
+        return history
+    daily_ret = df[price_cols].ffill().pct_change()
+    updated = []
+    for row in history:
+        row = dict(row)
+        val = row.get("actual_return")
+        # Only attempt to fill if still missing
+        missing = val is None or (isinstance(val, float) and np.isnan(val)) or val == ""
+        if missing:
+            pick = row.get("pick")
+            date_str = row.get("date")
+            if pick and date_str and pick in daily_ret.columns:
+                try:
+                    t = pd.Timestamp(date_str)
+                    future = daily_ret.index[daily_ret.index > t]
+                    if len(future) > 0:
+                        ret = daily_ret.loc[future[0], pick]
+                        if not np.isnan(ret):
+                            row["actual_return"] = round(float(ret), 6)
+                except Exception:
+                    pass
+        updated.append(row)
+    return updated
+
+
+
 
 def main(run_backtest: bool = True, force_lgbm: bool = False):
     from dataset    import load_source_data, build_inference_features
@@ -85,6 +118,8 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
 
         existing = pull_signal_history("equity")
         history  = existing.to_dict(orient="records") if existing is not None else []
+        # Backfill actual returns for any rows still missing them
+        history = _backfill_returns(history, df, universe)
         history.append({
             "date":          signal_date,
             "pick":          output_fixed["top_pick"],
@@ -98,6 +133,11 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
         if sw_bt:
             push_backtest_results(sw_bt, "equity", "shrinking_window")
         push_signal_history(history, "equity")
+        # Also save locally so Streamlit can display without HF token
+        import pandas as _pd
+        os.makedirs("outputs", exist_ok=True)
+        _pd.DataFrame(history).to_csv(f"outputs/signal_history_equity.csv", index=False)
+        _pd.DataFrame(history).to_csv(f"signal_history_equity.csv", index=False)
 
     logger.info(f"=== Equity Done | Top: {output_fixed['top_pick']}  "
                 f"Conviction: {output_fixed['top_conviction']:.1%} ===")
