@@ -75,6 +75,7 @@ def main(run_backtest: bool = True, force_lgbm: bool = False):
 
     combined = {"fixed_split": output_fixed, "shrinking_window": output_sw}
     save_output(combined, "outputs/equity_output.json")
+    save_output(combined, "equity_output.json")  # root-level copy for Streamlit fallback
 
     if run_backtest:
         fs_bt = run_fixed_split_backtest(df, universe, models, benchmark)
