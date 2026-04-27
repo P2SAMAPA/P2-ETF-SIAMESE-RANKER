@@ -29,9 +29,9 @@ UNIVERSES = {
 MACRO_COLS = ["VIX", "DXY", "T10Y2Y", "TBILL_3M"]
 
 # --- Siamese Network Parameters ---
-HIDDEN_LAYERS = [64, 32]
+HIDDEN_LAYERS = [128, 64]              # deeper encoder
 LEARNING_RATE = 0.001
-BATCH_SIZE = 128
+BATCH_SIZE = 256                       # larger batch for efficiency
 CONVICTION_THRESHOLD = 0.55
 RANDOM_SEED = 42
 
@@ -40,12 +40,12 @@ FEATURE_WINDOWS = [1, 5, 21, 63]
 MIN_OBSERVATIONS = 252
 
 # --- Pairwise dataset subsampling ---
-PAIR_SAMPLE_FRAC = 0.10           # use 10% of possible pairs to stay fast
+PAIR_SAMPLE_FRAC = 0.25                # 25% of all possible pairs
 
 # --- Training Epochs ---
-DAILY_EPOCHS = 30
-GLOBAL_EPOCHS = 30
-SHRINKING_EPOCHS = 15
+DAILY_EPOCHS = 60
+GLOBAL_EPOCHS = 60
+SHRINKING_EPOCHS = 25
 
 # --- Training Modes ---
 DAILY_LOOKBACK = 504
