@@ -1,175 +1,136 @@
 """
-siamese_model.py
-Siamese neural network for pairwise ETF ranking.
+Siamese Neural Network for pairwise ETF ranking.
 """
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
-import logging
-import time
-from typing import Tuple, Optional
 
-logger = logging.getLogger(__name__)
-
-
-class Encoder(nn.Module):
-    """Shared encoder — same weights applied to both ETFs in a pair."""
-
-    def __init__(self, input_dim: int, hidden_dims: list = [64, 32], dropout: float = 0.1):
+class SiameseEncoder(nn.Module):
+    """Shared encoder that processes individual ETF feature vectors."""
+    def __init__(self, input_dim, hidden_dims):
         super().__init__()
-        layers, in_dim = [], input_dim
-        for h in hidden_dims:
-            layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
-            in_dim = h
-        self.net        = nn.Sequential(*layers)
-        self.output_dim = in_dim
+        layers = []
+        prev_dim = input_dim
+        for h_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, h_dim))
+            layers.append(nn.ReLU())
+            prev_dim = h_dim
+        self.net = nn.Sequential(*layers)
+        self.output_dim = prev_dim
 
     def forward(self, x):
         return self.net(x)
 
 
-class SiameseRanker(nn.Module):
-    """
-    Full Siamese ranking model.
-    concat([E_i, E_j, E_i-E_j, |E_i-E_j|]) → Dense head → P(i > j)
-    """
-
-    def __init__(
-        self,
-        input_dim:   int,
-        hidden_dims: list = [64, 32],
-        head_dims:   list = [32, 16],
-        dropout:     float = 0.1,
-    ):
+class SiameseComparator(nn.Module):
+    """Comparator head that predicts P(i > j) from paired embeddings."""
+    def __init__(self, input_dim, hidden_dim=32):
         super().__init__()
-        self.encoder    = Encoder(input_dim, hidden_dims, dropout)
-        emb_dim         = self.encoder.output_dim
-        comparator_dim  = 4 * emb_dim
-
-        head_layers, in_dim = [], comparator_dim
-        for h in head_dims:
-            head_layers += [nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(dropout)]
-            in_dim = h
-        head_layers += [nn.Linear(in_dim, 1), nn.Sigmoid()]
-        self.head = nn.Sequential(*head_layers)
-
-    def forward(self, xi, xj):
-        ei    = self.encoder(xi)
-        ej    = self.encoder(xj)
-        delta = ei - ej
-        return self.head(torch.cat([ei, ej, delta, delta.abs()], dim=-1)).squeeze(-1)
-
-    def predict_proba(self, xi: np.ndarray, xj: np.ndarray, device: str = "cpu") -> np.ndarray:
-        self.eval()
-        with torch.no_grad():
-            return self.forward(
-                torch.tensor(xi, dtype=torch.float32).to(device),
-                torch.tensor(xj, dtype=torch.float32).to(device),
-            ).cpu().numpy()
-
-
-# ---------------------------------------------------------------------------
-# Training
-# ---------------------------------------------------------------------------
-
-def train_siamese(
-    Xi_train, Xj_train, y_train,
-    Xi_val,   Xj_val,   y_val,
-    input_dim:               int,
-    hidden_dims:             list  = [64, 32],
-    head_dims:               list  = [32, 16],
-    dropout:                 float = 0.1,
-    epochs:                  int   = 20,
-    batch_size:              int   = 256,
-    lr:                      float = 0.001,
-    early_stopping_patience: int   = 5,
-    device:                  str   = "cpu",
-    time_limit_seconds:      Optional[float] = None,
-) -> Tuple[SiameseRanker, dict]:
-
-    model     = SiameseRanker(input_dim, hidden_dims, head_dims, dropout).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.BCELoss()
-
-    def make_loader(Xi, Xj, y, shuffle=False):
-        ds = TensorDataset(
-            torch.tensor(Xi, dtype=torch.float32),
-            torch.tensor(Xj, dtype=torch.float32),
-            torch.tensor(y,  dtype=torch.float32),
+        # Input: [E_i, E_j, ΔE, |ΔE|] = 4 * input_dim
+        self.net = nn.Sequential(
+            nn.Linear(4 * input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+            nn.Sigmoid()
         )
-        return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
-    train_loader = make_loader(Xi_train, Xj_train, y_train, shuffle=True)
-    val_loader   = make_loader(Xi_val,   Xj_val,   y_val)
+    def forward(self, e_i, e_j):
+        delta = e_i - e_j
+        abs_delta = torch.abs(delta)
+        x = torch.cat([e_i, e_j, delta, abs_delta], dim=-1)
+        return self.net(x).squeeze(-1)
 
-    history          = {"train_loss": [], "val_loss": []}
-    best_val_loss    = float("inf")
-    best_state       = None
-    patience_counter = 0
-    start_time       = time.time()
 
-    for epoch in range(epochs):
-        if time_limit_seconds and (time.time() - start_time) > time_limit_seconds:
-            logger.warning(f"Time limit {time_limit_seconds}s hit at epoch {epoch}.")
-            break
+class SiameseRanker:
+    def __init__(self, input_dim, hidden_dims=None, lr=0.001, seed=42):
+        if hidden_dims is None:
+            hidden_dims = [64, 32]
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        self.encoder = SiameseEncoder(input_dim, hidden_dims).to(self.device)
+        self.comparator = SiameseComparator(self.encoder.output_dim).to(self.device)
+        self.optimizer = optim.Adam(
+            list(self.encoder.parameters()) + list(self.comparator.parameters()), lr=lr
+        )
+        self.criterion = nn.BCELoss()
 
-        model.train()
-        train_losses = []
-        for xi_b, xj_b, y_b in train_loader:
-            xi_b, xj_b, y_b = xi_b.to(device), xj_b.to(device), y_b.to(device)
-            optimizer.zero_grad()
-            loss = criterion(model(xi_b, xj_b), y_b)
-            loss.backward()
-            optimizer.step()
-            train_losses.append(loss.item())
+    def fit(self, X1, X2, labels, epochs=100, batch_size=128):
+        dataset = torch.utils.data.TensorDataset(
+            torch.tensor(X1), torch.tensor(X2), torch.tensor(labels)
+        )
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        model.eval()
-        val_losses = []
+        best_loss = float('inf')
+        best_state = None
+
+        for epoch in range(epochs):
+            total_loss = 0.0
+            for batch_X1, batch_X2, batch_y in loader:
+                batch_X1, batch_X2, batch_y = batch_X1.to(self.device), batch_X2.to(self.device), batch_y.to(self.device)
+                
+                e_i = self.encoder(batch_X1)
+                e_j = self.encoder(batch_X2)
+                preds = self.comparator(e_i, e_j)
+                
+                loss = self.criterion(preds, batch_y)
+                
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                
+                total_loss += loss.item() * len(batch_X1)
+            
+            avg_loss = total_loss / len(X1)
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_state = {
+                    'encoder': {k: v.clone() for k, v in self.encoder.state_dict().items()},
+                    'comparator': {k: v.clone() for k, v in self.comparator.state_dict().items()}
+                }
+            
+            if (epoch + 1) % 20 == 0:
+                print(f"    Epoch {epoch+1:3d} | Loss: {avg_loss:.6f}")
+
+        if best_state:
+            self.encoder.load_state_dict(best_state['encoder'])
+            self.comparator.load_state_dict(best_state['comparator'])
+
+    def compute_conviction_scores(self, features_dict: dict) -> dict:
+        """
+        Compute conviction scores for all ETFs.
+        features_dict: {ticker: feature_vector}
+        Returns: {ticker: conviction_score}
+        """
+        tickers = list(features_dict.keys())
+        n = len(tickers)
+        ticker_to_idx = {t: i for i, t in enumerate(tickers)}
+        
+        # Build feature matrix
+        X = np.stack([features_dict[t] for t in tickers])
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(self.device)
+        
+        self.encoder.eval()
+        self.comparator.eval()
+        
         with torch.no_grad():
-            for xi_b, xj_b, y_b in val_loader:
-                xi_b, xj_b, y_b = xi_b.to(device), xj_b.to(device), y_b.to(device)
-                val_losses.append(criterion(model(xi_b, xj_b), y_b).item())
-
-        tl, vl = np.mean(train_losses), np.mean(val_losses)
-        history["train_loss"].append(tl)
-        history["val_loss"].append(vl)
-        logger.info(f"Epoch {epoch+1}/{epochs} | Train: {tl:.4f} | Val: {vl:.4f}")
-
-        if vl < best_val_loss:
-            best_val_loss    = vl
-            best_state       = {k: v.clone() for k, v in model.state_dict().items()}
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if patience_counter >= early_stopping_patience:
-                logger.info(f"Early stopping at epoch {epoch+1}")
-                break
-
-    if best_state:
-        model.load_state_dict(best_state)
-
-    history["elapsed_seconds"] = time.time() - start_time
-    logger.info(f"Done in {history['elapsed_seconds']:.1f}s. Best val loss: {best_val_loss:.4f}")
-    return model, history
-
-
-# ---------------------------------------------------------------------------
-# Save / Load
-# ---------------------------------------------------------------------------
-
-def save_model(model: SiameseRanker, path: str, meta: dict = None):
-    import os
-    os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "meta": meta or {}}, path)
-    logger.info(f"Model saved → {path}")
-
-
-def load_model(path: str, input_dim: int, hidden_dims: list, head_dims: list) -> SiameseRanker:
-    payload = torch.load(path, map_location="cpu")
-    model   = SiameseRanker(input_dim, hidden_dims, head_dims)
-    model.load_state_dict(payload["state_dict"])
-    model.eval()
-    return model
+            embeddings = self.encoder(X_tensor)
+            
+            scores = {t: 0.0 for t in tickers}
+            for i, t1 in enumerate(tickers):
+                for j, t2 in enumerate(tickers):
+                    if i == j:
+                        continue
+                    prob = self.comparator(
+                        embeddings[i:i+1], embeddings[j:j+1]
+                    ).item()
+                    scores[t1] += prob
+            
+            # Average probability of outperforming other ETFs
+            for t in tickers:
+                scores[t] /= (n - 1)
+        
+        return scores
