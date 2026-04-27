@@ -52,7 +52,6 @@ def build_feature_vector(returns: pd.DataFrame, macro: pd.DataFrame, ticker: str
         else:
             features.append(0.0)
     
-    # Add macro features
     for col in macro.columns:
         features.append(float(macro[col].iloc[idx]))
     
@@ -61,27 +60,30 @@ def build_feature_vector(returns: pd.DataFrame, macro: pd.DataFrame, ticker: str
 def build_pairwise_dataset(returns: pd.DataFrame, macro: pd.DataFrame, tickers: list) -> tuple:
     """
     Build pairwise ranking dataset for Siamese network.
-    Returns (pairs_X1, pairs_X2, labels) where:
-      - pairs_X1, pairs_X2: (n_pairs, n_features) arrays
-      - labels: 1 if ETF_i return > ETF_j return, else 0
+    Subsamples pairs per day to config.PAIR_SAMPLE_FRAC.
     """
     X1_list, X2_list, labels_list = [], [], []
+    n_tickers = len(tickers)
+    rng = np.random.default_rng(config.RANDOM_SEED)
     
     for idx in range(63, len(returns) - 1):
-        future_returns = returns.iloc[idx + 1]  # next‑day returns
+        future_returns = returns.iloc[idx + 1]
+        # Enumerate all pairs for this day, then subsample
+        pairs = [(i, j) for i in range(n_tickers) for j in range(n_tickers) if i != j]
+        n_pairs = len(pairs)
+        n_sample = max(2, int(n_pairs * config.PAIR_SAMPLE_FRAC))
+        sampled = rng.choice(n_pairs, size=n_sample, replace=False)
         
-        for i, t1 in enumerate(tickers):
-            for j, t2 in enumerate(tickers):
-                if i == j:
-                    continue
-                feat1 = build_feature_vector(returns, macro, t1, idx)
-                feat2 = build_feature_vector(returns, macro, t2, idx)
-                
-                label = 1.0 if future_returns[t1] > future_returns[t2] else 0.0
-                
-                X1_list.append(feat1)
-                X2_list.append(feat2)
-                labels_list.append(label)
+        for pair_idx in sampled:
+            i, j = pairs[pair_idx]
+            t1, t2 = tickers[i], tickers[j]
+            feat1 = build_feature_vector(returns, macro, t1, idx)
+            feat2 = build_feature_vector(returns, macro, t2, idx)
+            label = 1.0 if future_returns[t1] > future_returns[t2] else 0.0
+            
+            X1_list.append(feat1)
+            X2_list.append(feat2)
+            labels_list.append(label)
     
     return (
         np.array(X1_list, dtype=np.float32),
