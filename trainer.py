@@ -12,7 +12,7 @@ from siamese_model import SiameseRanker
 import push_results
 
 
-def run_siamese_mode(returns, macro, tickers, mode_name):
+def run_siamese_mode(returns, macro, tickers, mode_name, epochs):
     """Run Siamese ranking on a data slice and return top picks."""
     if len(returns) < config.MIN_OBSERVATIONS:
         return None
@@ -30,9 +30,8 @@ def run_siamese_mode(returns, macro, tickers, mode_name):
     )
 
     print(f"  Training Siamese Ranker on {len(X1)} pairs...")
-    model.fit(X1, X2, labels, epochs=config.EPOCHS, batch_size=config.BATCH_SIZE)
+    model.fit(X1, X2, labels, epochs=epochs, batch_size=config.BATCH_SIZE)
 
-    # Build latest feature vectors for prediction
     latest_idx = len(returns) - 1
     features_dict = {}
     for ticker in tickers:
@@ -69,7 +68,8 @@ def run_shrinking_windows(df_master, macro, tickers):
             continue
 
         m = macro.loc[returns.index]
-        mode_out = run_siamese_mode(returns, m, tickers, f"Shrinking {start_year}")
+        mode_out = run_siamese_mode(returns, m, tickers, f"Shrinking {start_year}",
+                                    epochs=config.SHRINKING_EPOCHS)
         if mode_out:
             top_ticker = mode_out['top_picks'][0]['ticker']
             top_conviction = mode_out['top_picks'][0]['conviction']
@@ -83,7 +83,6 @@ def run_shrinking_windows(df_master, macro, tickers):
     if not windows:
         return None
 
-    # Consensus
     vote = {}
     for w in windows:
         vote[w['ticker']] = vote.get(w['ticker'], 0) + 1
@@ -120,13 +119,15 @@ def main():
         # Daily
         daily_ret = returns_all.iloc[-config.DAILY_LOOKBACK:]
         daily_macro = m.iloc[-config.DAILY_LOOKBACK:]
-        daily_out = run_siamese_mode(daily_ret, daily_macro, tickers, "Daily")
+        daily_out = run_siamese_mode(daily_ret, daily_macro, tickers, "Daily",
+                                     epochs=config.DAILY_EPOCHS)
         if daily_out:
             universe_out['daily'] = daily_out
             print(f"  Daily top: {daily_out['top_picks'][0]['ticker']}")
 
         # Global
-        global_out = run_siamese_mode(returns_all, m, tickers, "Global")
+        global_out = run_siamese_mode(returns_all, m, tickers, "Global",
+                                      epochs=config.GLOBAL_EPOCHS)
         if global_out:
             universe_out['global'] = global_out
             print(f"  Global top: {global_out['top_picks'][0]['ticker']}")
