@@ -10,7 +10,7 @@ HF_DATA_REPO = "P2SAMAPA/fi-etf-macro-signal-master-data"
 HF_DATA_FILE = "master_data.parquet"
 HF_OUTPUT_REPO = "P2SAMAPA/p2-etf-siamese-ranker-results"
 
-# --- Universe Definitions (SPY, TLT added) ---
+# --- Universe Definitions ---
 FI_COMMODITIES_TICKERS = ["TLT", "VCIT", "LQD", "HYG", "VNQ", "GLD", "SLV"]
 EQUITY_SECTORS_TICKERS = [
     "SPY", "QQQ", "XLK", "XLF", "XLE", "XLV",
@@ -31,14 +31,21 @@ MACRO_COLS = ["VIX", "DXY", "T10Y2Y", "TBILL_3M"]
 # --- Siamese Network Parameters ---
 HIDDEN_LAYERS = [64, 32]
 LEARNING_RATE = 0.001
-EPOCHS = 100
 BATCH_SIZE = 128
 CONVICTION_THRESHOLD = 0.55
 RANDOM_SEED = 42
 
 # --- Feature Engineering ---
-FEATURE_WINDOWS = [1, 5, 21, 63]        # Lagged return windows
+FEATURE_WINDOWS = [1, 5, 21, 63]
 MIN_OBSERVATIONS = 252
+
+# --- Pairwise dataset subsampling ---
+PAIR_SAMPLE_FRAC = 0.10           # use 10% of possible pairs to stay fast
+
+# --- Training Epochs ---
+DAILY_EPOCHS = 30
+GLOBAL_EPOCHS = 30
+SHRINKING_EPOCHS = 15
 
 # --- Training Modes ---
 DAILY_LOOKBACK = 504
